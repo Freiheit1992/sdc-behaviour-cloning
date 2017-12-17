@@ -3,6 +3,8 @@ import base64
 from datetime import datetime
 import os
 import shutil
+import sys
+import time
 
 import numpy as np
 import socketio
@@ -60,7 +62,8 @@ def telemetry(sid, data):
         # The current image from the center camera of the car
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
-        image_array = np.asarray(image)
+        image_array = np.asarray(image) / 127.5 - 1
+        start = time.time()
         pred = model.predict(
             [image_array[None, :, :, :], np.array([float(speed)])], batch_size=1)
         steering_angle = float(pred[0][0])
@@ -68,6 +71,7 @@ def telemetry(sid, data):
         # throttle = controller.update(float(speed))
         # print(steering_angle, throttle)
         send_control(steering_angle, throttle)
+        sys.stdout.write('\rPrediction took {:.0f}ms. '.format(1000 * (time.time() - start)))
 
         # save frame
         if args.image_folder != '':
@@ -120,7 +124,14 @@ if __name__ == '__main__':
         print('You are using Keras version ', keras_version,
               ', but the model was built using ', model_version)
 
-    model = load_model(args.model)
+    try:
+        model = load_model(args.model)
+    except ValueError:
+        from keras.utils.generic_utils import CustomObjectScope
+        from keras.applications.mobilenet import relu6, DepthwiseConv2D
+        with CustomObjectScope({'relu6': relu6,
+                                'DepthwiseConv2D': DepthwiseConv2D}):
+            model = load_model(args.model)
 
     if args.image_folder != '':
         print("Creating image folder at {}".format(args.image_folder))

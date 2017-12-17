@@ -13,7 +13,7 @@ from keras.layers import Input
 from keras.callbacks import ModelCheckpoint, EarlyStopping, LearningRateScheduler
 
 from nvidia import get_nvidia
-from pretrained import get_vgg16
+from pretrained import get_mobilenet, get_vgg16
 
 DATA_PATH = './data'
 
@@ -21,14 +21,23 @@ models = {
     'nvidia': {
         'model': get_nvidia,
         'batch': 8,
-        'lr': 2e-5,
-        'decay': .8  # 1/2 every 3 epochs
+        'lr': 1e-3,
+        'decay': .5,
+        'patience': 5
+    },
+    'mobilenet': {
+        'model': get_mobilenet,
+        'batch': 8,
+        'lr': 1e-4,
+        'decay': .7,  # ~1/2 every 2 epochs
+        'patience': 2
     },
     'vgg16': {
         'model': get_vgg16,
         'batch': 4,
         'lr': 2e-5,
-        'decay': .8
+        'decay': .8,  # ~1/2 every 3 epochs
+        'patience': 2
     }
 }
 
@@ -54,15 +63,13 @@ def load_train_test_data(csvpath=glob(join(DATA_PATH, '*.csv'))):
 
 
 def generator(images, speed, throttle, steering, batch_size, training=False):
+    x_batch, s_batch, a_batch, t_batch = [], [], [], []
     while True:
         images, speed, throttle, steering = shuffle(images, speed, throttle, steering)
-        x_batch, s_batch, a_batch, t_batch = [], [], [], []
         for x, s, t, a in zip(images, speed, throttle, steering):
-            if training and np.random.random() > np.min([.1, np.abs(a) * 5]):
-                # Subsample small angles
-                continue
             path = join(DATA_PATH, x)
             image = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
+            image = image / 127.5 - 1
             if training and np.random.random() < 0.5:
                 image = np.fliplr(image)
                 a = -a
@@ -94,9 +101,9 @@ def train(model_name='nvidia'):
     learning_rate = config['lr']
     callbacks = [
         # Save best model
-        ModelCheckpoint('./{}.h5'.format(model_name), monitor='val_steering_loss', save_best_only=True),
+        ModelCheckpoint('./{}.h5'.format(model_name), monitor='val_loss', save_best_only=True),
         # Stop training after 5 epochs without improvement
-        EarlyStopping(monitor='val_steering_loss', patience=5),
+        EarlyStopping(monitor='val_loss', patience=config['patience']),
         # Polynomial decaying learning rate
         LearningRateScheduler(lambda x: learning_rate * (config['decay'] ** x)),
     ]
