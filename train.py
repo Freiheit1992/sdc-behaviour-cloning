@@ -7,6 +7,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from os.path import join
 
+from imgaug import augmenters as iaa
 from keras.utils import plot_model
 from keras.optimizers import Adam
 from keras.layers import Input
@@ -62,17 +63,46 @@ def load_train_test_data(csvpath=glob(join(DATA_PATH, '*.csv'))):
     return train_test_split(center, speed, throttle, y, test_size=0.2)
 
 
+def bucket(angle):
+    # Bucket by first decimal
+    return np.uint8(np.abs(angle * 10))
+
+
 def generator(images, speed, throttle, steering, batch_size, training=False):
     x_batch, s_batch, a_batch, t_batch = [], [], [], []
+    buckets = np.zeros((11,))  # [0, 10]
+    original = set()
     while True:
-        images, speed, throttle, steering = shuffle(images, speed, throttle, steering)
+        if training:
+            images, speed, throttle, steering = shuffle(images, speed, throttle, steering)
+            aug = iaa.SomeOf((1, None), [
+                iaa.Add((-80, 0)),
+                iaa.Dropout(p=(0, 0.2)),
+                iaa.Affine(translate_percent=(-0.05, 0.05))
+            ])
         for x, s, t, a in zip(images, speed, throttle, steering):
+            if training:
+                b = bucket(a)
+                if buckets[b] / np.sum(buckets) > 1 / 3:
+                    # Make sure no angle bucket dominate the training dataset
+                    continue
+                buckets[b] += 1
             path = join(DATA_PATH, x)
             image = cv2.cvtColor(cv2.imread(path), cv2.COLOR_BGR2RGB)
-            image = image / 127.5 - 1
-            if training and np.random.random() < 0.5:
-                image = np.fliplr(image)
-                a = -a
+            if training:
+                if np.random.random() < 0.5:
+                    image = np.fliplr(image)
+                    a = -a
+                if x in original:
+                    # Only augment after original has been added
+                    image = aug.augment_image(image)
+            original.add(x)
+            # Normalize
+            # Sample-wise center
+            # image = (image - np.min(image)) / (np.max(image) - np.min(image))
+            # image = (image - 0.5) * 2
+            # Dataset-wise center
+            image = (image - 127.5) / 127.5
             x_batch.append(image)
             s_batch.append(s)
             a_batch.append(a)
